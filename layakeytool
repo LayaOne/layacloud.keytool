@@ -1,0 +1,274 @@
+#!/usr/bin/env node
+
+
+"use strict";
+
+
+const program = require('commander');
+const prompt = require('prompt');
+const util = require('./layacloud-common/util');
+const accountManager = require('./layacloud-common/am').accountManager;
+const TestNetPassword = require('./layacloud-common/am').TestNetPassword;
+
+
+program
+    .version('0.1')
+    .description('layacloud Keytool');
+
+program
+    .command('create')
+    .description('create a new account and its private key')
+    .action(() => {
+
+        prompt.get({
+            description: 'Enter a password',
+            name: 'password',
+            hidden: true,
+        }, (err, result) => {
+
+            if(err) {
+                console.error(err);
+                return;
+            }
+
+            let pass = result.password;
+            console.log("User password: [" + pass + "]");
+            if (!pass || pass.length == 0) {
+                console.log("Use the default password: " + TestNetPassword);
+                pass = TestNetPassword;
+            }
+
+            let acc = accountManager.createAccount(pass);
+            console.log("New account created.");
+            if(acc) logAccount(acc);
+
+
+        });
+
+    });
+
+program
+    .command('list')
+    .description('list accounts')
+    .action(() => {
+
+        let accounts = accountManager.listAccount();
+        if(accounts.length < 1) {
+            console.log("No Account.");
+        }
+        accounts.forEach( (acc, i) => {
+            console.log("Account " + (i + 1) + ":");
+            logAccount(acc);
+        });
+
+    });
+
+program
+    .command('delete <address>')
+    .description('delete a account and its associated key')
+    .option('-f, --force', 'force to delete, without user confirmation')
+    .action((address, options) => {
+
+        if(options.force) {
+            if (accountManager.delete(address))
+                console.log("Account deleted.");
+            else
+                console.log("Account not found.");
+        }
+        else {
+            prompt.get( {
+                name: 'confirm',
+                description: 'confirm to delete account? yes/no',
+            }, (err, result) => {
+
+                if(err) {
+                    console.error(err);
+                    return;
+                }
+
+                if(result.confirm === 'yes') {
+                    if (accountManager.delete(address))
+                        console.log("Account deleted.");
+                    else
+                        console.log("Account not found.");
+                }
+
+            });
+        }
+    });
+
+program
+    .command('key <address>')
+    .description('show private key info of the specified account')
+    .option('-p <password>', 'user input password')
+    .action((address, options) => {
+        let acc = accountManager.getAccount(address);
+        if (!acc) {
+            console.log("No account found.");
+            return;
+        }
+
+        let pass = options.P;
+        if (pass) {
+            if (acc.getKey(pass)) {
+                logAccount(acc);
+            }
+            else {
+                console.log("Failed to retrieve key info.");
+            }
+
+        }
+        else {
+
+            prompt.get({
+                description: 'Enter the password for this account',
+                name: 'password',
+                hidden: true,
+            }, (err, result) => {
+
+                if(err) {
+                    console.error(err);
+                    return;
+                }
+
+                pass = result.password;
+                if (!pass || pass.length == 0) {
+                    console.log("Use the default password: " + TestNetPassword);
+                    pass = TestNetPassword;
+                }
+                acc.getKey(pass);
+                if(acc.key) {
+                    logAccount(acc);
+                }
+                else {
+                    console.log("Failed to retrieve key info.");
+                }
+
+            });
+        }
+    });
+
+program
+    .command('sign <message>')
+    .description('sign a message. The message could be from a file content referenced by @<path>')
+    .option('-p <password>', 'user input password')
+    .option('-a <address>', 'use which account to sign')
+    .action((message, options) => {
+
+        let address = options.A;
+        let acc = accountManager.getAccount(address);
+        if (!acc) {
+            console.log("No account found.");
+            return;
+        }
+
+        if(message.startsWith('@')) {
+            let file = message.slice(1);
+            const fs = require('fs');
+            try {
+                message = fs.readFileSync(file);
+            }
+            catch (e) {
+                console.log("Failed to read content from: " + file);
+                return;
+            }
+        }
+        else {
+            message = util.toBuffer(message);
+        }
+
+        let pass = options.P;
+        if(pass) {
+            let sig = acc.sign(message, pass);
+            if (sig) {
+                console.log("Signature: " + sig);
+            }
+            else {
+                console.log("Failed to sign");
+            }
+        }
+        else {
+            prompt.get({
+                description: 'Enter the password for this account',
+                name: 'password',
+                hidden: true,
+            }, (err, result) => {
+
+                if(err) {
+                    console.error(err);
+                    return;
+                }
+
+                pass = result.password;
+                if (!pass || pass.length == 0) {
+                    console.log("Use the default password: " + TestNetPassword);
+                    pass = TestNetPassword;
+                }
+
+                let sig = acc.sign(message, pass);
+                if (sig) {
+                    console.log("Signature: " + sig);
+                }
+                else {
+                    console.log("Failed to sign");
+                }
+
+            });
+        }
+
+    });
+
+program
+    .command('verify <message> <signature>')
+    .description('verify a signature. The message could be from a file content referenced by @<path>')
+    .option('-a <address>', 'use which account to verify')
+    .action( (message, signature, options) => {
+
+        let address = options.A;
+        let acc = accountManager.getAccount(address);
+        if (!acc) {
+            console.log("No account found.");
+            return;
+        }
+
+        if(message.startsWith('@')) {
+            let file = message.slice(1);
+            const fs = require('fs');
+            try {
+                message = fs.readFileSync(file);
+            }
+            catch (e) {
+                console.log("Failed to read content from: " + file);
+                return;
+            }
+        }
+        else {
+            message = util.toBuffer(message);
+        }
+
+        signature = util.toBuffer(signature);
+
+        if(acc.verify(message, signature)) {
+            console.log("Verification Succeed.");
+        }
+        else {
+            console.log("Failed to verify.");
+        }
+
+    });
+
+program.parse(process.argv);
+
+
+
+function logAccount(acc) {
+    console.log("------------------------------------");
+    console.log("Address: " + acc.address);
+    if (acc.key) {
+        console.log("Private Key: " + util.bufferToHexWith0x(acc.key));
+    }
+    if (acc.pubkey) {
+        console.log("Public Key: " + util.bufferToHexWith0x(acc.pubkey));
+    }
+    console.log("------------------------------------");
+}
